@@ -57,6 +57,28 @@ class Attention(Module):
         out = self.merge_heads(out)
         return self.to_out(out)
 
+# swiglu ff - Shazeer et al
+
+class Feedforward(Module):
+    def __init__(
+        self,
+        dim,
+        expansion_factor = 4.
+    ):
+        super().__init__()
+        dim_inner = int(dim * expansion_factor * 2 / 3)
+
+        self.keys = Linear(dim, dim_inner * 2)
+        self.values = Linear(dim_inner, dim)
+
+    def forward(
+        self,
+        queries
+    ):
+        sim, gates = self.keys(queries).chunk(2, dim = -1)
+        sim = sim * F.gelu(gates)
+        return self.values(sim)
+
 # block
 
 class TransformerBlock(Module):
