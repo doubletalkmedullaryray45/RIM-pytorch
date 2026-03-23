@@ -1,6 +1,6 @@
 ## RIM-pytorch (wip)
 
-Explorations into Recurrent Independent Mechanisms, from Goyal et al. of MILA
+Explorations into [Recurrent Independent Mechanisms](https://arxiv.org/abs/1909.10893), from Goyal et al. of MILA
 
 [Jeff Hawkins](https://www.numenta.com/blog/2019/01/16/the-thousand-brains-theory-of-intelligence/) would be delighted if this were to pan out
 
