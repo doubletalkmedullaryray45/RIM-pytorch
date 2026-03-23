@@ -4,7 +4,7 @@ from functools import partial
 import torch
 from torch import nn
 import torch.nn.functional as F
-from torch.nn import Module, ModuleList, Linear
+from torch.nn import Module, ModuleList, Linear, ParameterList
 from torch.func import vmap, functional_call
 
 from torch_einops_utils import pack_with_inverse
@@ -115,6 +115,7 @@ class DepthlessTransformer(Module):
     def __init__(
         self,
         dim,
+        num_tokens = None,
         num_blocks = 6,
         num_message_exchanges = 6,
         dim_head = 64,
@@ -131,8 +132,8 @@ class DepthlessTransformer(Module):
 
         # define attention and feedforward
 
-        self.attn = Attention(dim, dim_head = dim_head, heads = heads)
-        self.ff = Feedforward(dim, ff_expansion_factor)
+        attn = Attention(dim, dim_head = dim_head, heads = heads)
+        ff = Feedforward(dim, ff_expansion_factor)
 
         # the attention residual, or just putting together the information coming from various recurrent modules
 
@@ -141,34 +142,52 @@ class DepthlessTransformer(Module):
         # functional forwards
 
         def attn_forward(params, inputs):
-            return functional_call(self.attn, params, inputs)
+            return functional_call(attn, params, inputs)
 
         def ff_forward(params, inputs):
-            return functional_call(self.ff, params, inputs)
+            return functional_call(ff, params, inputs)
 
-        self.attn_parameters = {name: repeat_blocks(param) for name, param in self.attn.named_parameters()}
-        self.ff_parameters = {name: repeat_blocks(param) for name, param in self.ff.named_parameters()}
+        attn_named_params = dict(attn.named_parameters())
+        ff_named_params = dict(ff.named_parameters())
+
+        self.attn_parameter_names = attn_named_params.keys()
+        self.attn_parameters = ParameterList([repeat_blocks(param) for param in attn_named_params.values()])
+
+        self.ff_parameter_names = ff_named_params.keys()
+        self.ff_parameters = ParameterList([repeat_blocks(param) for param in ff_named_params.values()])
 
         # vmap over blocks dimension to call all block at once across tokens
 
         self.attn_forward = vmap(attn_forward, in_dims = (0, 0))
         self.ff_forward = vmap(ff_forward, in_dims = (0, 0))
 
+        # readout
+
+        self.query_readout = nn.Parameter(torch.randn(dim) * 1e-2)
+        self.readout = nn.Sequential(nn.RMSNorm(dim), LinearNoBias(dim, num_tokens)) if exists(num_tokens) else None
+
     def forward(
         self,
         tokens
     ):
-        batch, blocks = tokens.shape[0], self.num_blocks
+        batch, seq_len, blocks = *tokens.shape[:2], self.num_blocks
 
         tokens = self.repeat_blocks(tokens) # (blocks b n d)
+
+        # parameters
+
+        attn_parameters = dict(zip(self.attn_parameter_names, self.attn_parameters))
+        ff_parameters = dict(zip(self.ff_parameter_names, self.ff_parameters))
 
         # reframed as recurrent processing of tokens with message passing (attention residual)
 
         messages = [tokens]
 
+        # message passing
+
         for i in range(self.num_message_exchanges):
-            attended = self.attn_forward(self.attn_parameters, tokens)
-            retrieved_memories = self.ff_forward(self.ff_parameters, tokens)
+            attended = self.attn_forward(attn_parameters, tokens)
+            retrieved_memories = self.ff_forward(ff_parameters, tokens)
 
             # add to processed messages
 
@@ -178,15 +197,14 @@ class DepthlessTransformer(Module):
             # will use the initial messages coming in as the queries, all products of all the blocks become messages
 
             packed_messages, _ = pack(messages, '* b n d') # (message blocks) packed
-
-            packed_messages = repeat(packed_messages, 'm b n d -> (b l) n m d', l = blocks)
+            all_messages = repeat(packed_messages, 'm b n d -> (b l) n m d', l = blocks)
 
             message_queries, inverse_pack_blocks = pack_with_inverse(tokens, '* n d') # (m b n d)
             message_queries = rearrange(message_queries, '... n d -> ... n 1 d')
 
             # each message producer attends to all messages (and their history) by all other producers
 
-            pooled_messages = self.attn_residual(message_queries, packed_messages)
+            pooled_messages = self.attn_residual(message_queries, all_messages)
 
             pooled_messages = inverse_pack_blocks(pooled_messages, '* n one d')
 
@@ -196,4 +214,19 @@ class DepthlessTransformer(Module):
 
             tokens = pooled_messages
 
-        return tokens
+        if not exists(self.readout):
+            return tokens
+
+        # the readout itself is just a another message producer
+
+        queries = repeat(self.query_readout, 'd -> b n 1 d', b = batch, n = seq_len)
+
+        all_messages = rearrange(messages, 'm l b n d -> b n (m l) d')
+
+        readout_input = self.attn_residual(queries, all_messages)
+
+        readout_input = rearrange(readout_input, 'b n 1 d -> b n d')
+
+        logits = self.readout(readout_input)
+
+        return logits
