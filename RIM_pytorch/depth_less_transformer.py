@@ -8,6 +8,7 @@ from torch.nn import Module, ModuleList, Linear, ParameterList
 from torch.func import vmap, functional_call
 
 from torch_einops_utils import pack_with_inverse
+from PoPE_pytorch import PoPE, flash_attn_with_pope
 
 from einops import einsum, repeat, rearrange, pack
 from einops.layers.torch import Rearrange, Reduce
@@ -43,7 +44,7 @@ class Attention(Module):
         dim_head = 64,
         heads = 8,
         causal = False,
-        key_rmsnorm = False
+        key_rmsnorm = False,
     ):
         super().__init__()
         self.scale = dim_head ** -0.5
@@ -67,8 +68,10 @@ class Attention(Module):
     def forward(
         self,
         tokens,
-        context = None
+        context = None,
+        pos_emb = None
     ):
+        device = tokens.device
         tokens, inverse_pack = pack_with_inverse(tokens, '* n d')
         tokens = self.norm(tokens)
 
@@ -83,16 +86,23 @@ class Attention(Module):
 
         k = self.maybe_key_norm(k)
 
-        sim = einsum(q, k, 'b h i d, b h j d -> b h i j')
+        if exists(pos_emb):
+            out = flash_attn_with_pope(
+                q, k, v,
+                pos_emb = pos_emb,
+                causal = self.causal
+            )
+        else:
+            sim = einsum(q, k, 'b h i d, b h j d -> b h i j')
 
-        if self.causal:
-            i, j = sim.shape[-2:]
-            causal_mask = torch.ones((i, j), dtype = torch.bool).triu(j - i + 1)
-            sim = sim.masked_fill(causal_mask, -torch.finfo(sim.dtype).max)
+            if self.causal:
+                i, j = sim.shape[-2:]
+                causal_mask = torch.ones((i, j), dtype = torch.bool, device = device).triu(j - i + 1)
+                sim = sim.masked_fill(causal_mask, -torch.finfo(sim.dtype).max)
 
-        attn = sim.softmax(dim = -1)
+            attn = sim.softmax(dim = -1)
 
-        out = einsum(attn, v, 'b h i j, b h j d -> b h i d')
+            out = einsum(attn, v, 'b h i j, b h j d -> b h i d')
 
         out = self.to_gates(tokens).sigmoid() * out
 
@@ -137,6 +147,7 @@ class DepthlessTransformer(Module):
         causal = False,
         ff_expansion_factor = 4.,
         num_tokens = None,
+        use_pope = False,
     ):
         super().__init__()
 
@@ -145,6 +156,10 @@ class DepthlessTransformer(Module):
         self.num_blocks = num_blocks
         repeat_blocks = Reduce('... -> blocks ...', 'repeat', blocks = num_blocks)
         self.repeat_blocks = repeat_blocks
+
+        self.use_pope = use_pope
+        if use_pope:
+            self.pope = PoPE(dim = dim_head, heads = heads)
 
         # define attention and feedforward
 
@@ -157,8 +172,8 @@ class DepthlessTransformer(Module):
 
         # functional forwards
 
-        def attn_forward(params, inputs):
-            return functional_call(attn, params, inputs)
+        def attn_forward(params, inputs, pos_emb = None):
+            return functional_call(attn, params, inputs, kwargs = dict(pos_emb = pos_emb))
 
         def ff_forward(params, inputs):
             return functional_call(ff, params, inputs)
@@ -174,7 +189,7 @@ class DepthlessTransformer(Module):
 
         # vmap over blocks dimension to call all block at once across tokens
 
-        self.attn_forward = vmap(attn_forward, in_dims = (0, 0))
+        self.attn_forward = vmap(attn_forward, in_dims = (0, 0, None))
         self.ff_forward = vmap(ff_forward, in_dims = (0, 0))
 
         # readout
@@ -187,6 +202,7 @@ class DepthlessTransformer(Module):
         tokens,
         return_messages = False
     ):
+        device = tokens.device
         batch, seq_len, blocks = *tokens.shape[:2], self.num_blocks
 
         tokens = self.repeat_blocks(tokens) # (blocks b n d)
@@ -200,6 +216,10 @@ class DepthlessTransformer(Module):
 
         messages = [tokens]
 
+        pos_emb = None
+        if self.use_pope:
+            pos_emb = self.pope(seq_len)
+
         # message passing
 
         for count in enumerate(range(self.num_message_exchanges), start = 1):
@@ -207,7 +227,7 @@ class DepthlessTransformer(Module):
 
             # representations go into all of the blocks at once, without any notion of depth
 
-            attended = self.attn_forward(attn_parameters, tokens)
+            attended = self.attn_forward(attn_parameters, tokens, pos_emb)
             retrieved_memories = self.ff_forward(ff_parameters, tokens)
 
             # add outputs to processed messages
@@ -259,4 +279,3 @@ class DepthlessTransformer(Module):
             return logits
 
         return logits, messages
-

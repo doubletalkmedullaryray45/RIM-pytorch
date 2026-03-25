@@ -5,9 +5,11 @@ param = pytest.mark.parametrize
 
 @param('causal', (False, True))
 @param('readout', (False, True))
+@param('use_pope', (False, True))
 def test_rim(
     causal,
-    readout
+    readout,
+    use_pope
 ):
     from RIM_pytorch import RIM
     from RIM_pytorch.depth_less_transformer import DepthlessTransformer
@@ -15,6 +17,7 @@ def test_rim(
     model = DepthlessTransformer(
         512,
         causal = causal,
+        use_pope = use_pope,
         num_blocks = 6,
         num_tokens = 256 if readout else None,
     )
