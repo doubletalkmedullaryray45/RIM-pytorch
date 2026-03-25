@@ -6,12 +6,11 @@ param = pytest.mark.parametrize
 @param('causal', (False, True))
 @param('readout', (False, True))
 @param('use_pope', (False, True))
-def test_rim(
+def test_depth_less_transformer(
     causal,
     readout,
     use_pope
 ):
-    from RIM_pytorch import RIM
     from RIM_pytorch.depth_less_transformer import DepthlessTransformer
 
     model = DepthlessTransformer(
@@ -22,7 +21,11 @@ def test_rim(
         num_tokens = 16 if readout else None,
     )
 
-    x = torch.randn(1, 7, 32)
+    if readout:
+        x = torch.randint(0, 16, (1, 7))
+    else:
+        x = torch.randn(1, 7, 32)
+
     out = model(x)
 
     if readout:

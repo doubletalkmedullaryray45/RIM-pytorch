@@ -205,8 +205,11 @@ class EnsemblesWithMessagePassing(Module):
         tokens, # (b ...) or (l b ...)
         module_kwargs: dict[str, dict] | None = None,
         repeat_input_for_ensemble: bool = False,
-        return_all_messages: bool = False
+        return_all_messages: bool = False,
+        num_message_exchanges: int | None = None
     ): # (l b ...)
+
+        num_message_exchanges = default(num_message_exchanges, self.num_message_exchanges)
 
         if repeat_input_for_ensemble:
             tokens = repeat(tokens, '... -> l ...', l = self.ensemble_size)
@@ -217,8 +220,8 @@ class EnsemblesWithMessagePassing(Module):
 
         # reframed as recurrent processing of tokens with message passing (attention residual)
 
-        for count in range(1, self.num_message_exchanges + 1):
-            is_last = count == self.num_message_exchanges
+        for count in range(1, num_message_exchanges + 1):
+            is_last = count == num_message_exchanges
 
             # collect messages from all ensembles
 
@@ -288,6 +291,10 @@ class DepthlessTransformer(Module):
 
         self.attn_residual = Attention(dim, key_rmsnorm = True, dim_head = dim_head, heads = heads)
 
+        # token embedding
+
+        self.token_emb = nn.Embedding(num_tokens, dim) if exists(num_tokens) else None
+
         # ensembles with message passing
 
         self.ensembles_with_message_passing = EnsemblesWithMessagePassing(
@@ -308,8 +315,12 @@ class DepthlessTransformer(Module):
     def forward(
         self,
         tokens,
-        return_messages = False
+        return_messages = False,
+        num_message_exchanges: int | None = None
     ):
+        if exists(self.token_emb):
+            tokens = self.token_emb(tokens)
+
         batch, seq_len, blocks = *tokens.shape[:2], self.num_blocks
 
         # positions forwarded to attn ensemble
@@ -325,7 +336,8 @@ class DepthlessTransformer(Module):
             tokens,
             module_kwargs = module_kwargs,
             repeat_input_for_ensemble = True,
-            return_all_messages = True
+            return_all_messages = True,
+            num_message_exchanges = num_message_exchanges
         )
 
         # the readout itself is just another message producer
