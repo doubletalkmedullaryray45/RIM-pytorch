@@ -251,15 +251,15 @@ class EnsemblesWithMessagePassing(Module):
             # then we just do attention pooling (attention 'residual') for next round
             # will use the initial messages coming in as the queries, all products of all the blocks become messages - voting phase
 
-            all_messages = repeat(messages, 'm lc b ... d -> (b lq) ... (m lc) d', lq = blocks)
+            all_messages = repeat(messages, 'm lc b ... d -> (lq b) ... (m lc) d', lq = blocks)
 
-            message_queries = rearrange(tokens, 'l b ... d -> (b l) ... 1 d')
+            message_queries = rearrange(tokens, 'l b ... d -> (l b) ... 1 d')
 
             # each message producer attends to all messages (and their history) by all other producers
 
             pooled_messages = self.voting_attn(message_queries, all_messages)
 
-            pooled_messages = rearrange(pooled_messages, '(b l) ... 1 d -> l b ... d', l = blocks)
+            pooled_messages = rearrange(pooled_messages, '(l b) ... 1 d -> l b ... d', l = blocks)
 
             # keep iterating
 
@@ -319,7 +319,7 @@ class DepthlessTransformer(Module):
 
         # the attention residual, or just putting together the information coming from various recurrent modules
 
-        self.attn_residual = self.ensembles_with_message_passing.voting_attn
+        self.attn_residual = Attention(dim, key_rmsnorm = True, dim_head = dim_head, heads = heads)
 
         # readout
 
