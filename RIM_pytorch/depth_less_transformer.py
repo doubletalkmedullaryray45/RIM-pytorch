@@ -25,8 +25,8 @@ from einops.layers.torch import Rearrange, Reduce
 
 # types
 
-RoutingIndices = tuple[int, ...]
-RoutingConfig = tuple[str, RoutingIndices]
+RoutingIndices = tuple[int, ...] | int | None
+RoutingConfig = tuple[str, RoutingIndices] | str
 RoutingRound = tuple[RoutingConfig, ...]
 RoutingSchedule = tuple[RoutingRound, ...]
 
@@ -197,13 +197,16 @@ class Ensemble(Module):
     def forward(
         self,
         tokens,
-        indices: tuple[int, ...] | None = None,
+        indices: tuple[int, ...] | int | None = None,
         *args,
         **kwargs
     ):
         params = self.parameters
 
         if exists(indices):
+            if isinstance(indices, int):
+                indices = (indices,)
+
             indices = list(indices)
             params = {k: v[indices] for k, v in params.items()}
             tokens = tokens[indices]
@@ -221,11 +224,13 @@ class EnsemblesWithMessagePassing(Module):
         dim: int | None = None,
         voting_attn: Module | None = None,
         voting_attn_kwargs: dict = dict(dim_head = 64, heads = 8),
-        num_message_exchanges: int = 1
+        num_message_exchanges: int = 1,
+        routing_schedule: RoutingSchedule | None = None
     ):
         super().__init__()
         self.num_message_exchanges = num_message_exchanges
         self.ensemble_size = ensemble_size
+        self.routing_schedule = routing_schedule
 
         self.ensembles = nn.ModuleDict({
             name: Ensemble(module, ensemble_size) for name, module in modules.items()
@@ -248,6 +253,8 @@ class EnsemblesWithMessagePassing(Module):
         routing_schedule: RoutingSchedule | None = None
     ): # (l b ...)
 
+        routing_schedule = default(routing_schedule, self.routing_schedule)
+
         if exists(routing_schedule):
             num_message_exchanges = len(routing_schedule)
         else:
@@ -269,9 +276,19 @@ class EnsemblesWithMessagePassing(Module):
 
             active_modules = routing_schedule[count - 1] if exists(routing_schedule) else tuple((name, None) for name in self.ensembles.keys())
 
-            for mod_name, indices in active_modules:
-                if exists(indices) and len(indices) == 0:
-                    continue
+            for config in active_modules:
+                if isinstance(config, str):
+                    mod_name = config
+                    indices = None
+                else:
+                    mod_name, indices = config
+
+                if exists(indices):
+                    if isinstance(indices, int):
+                        indices = (indices,)
+
+                    if len(indices) == 0:
+                        continue
 
                 ensemble = self.ensembles[mod_name]
                 kwargs = module_kwargs.get(mod_name, dict())
@@ -318,6 +335,7 @@ class DepthlessTransformer(Module):
         ff_expansion_factor = 4.,
         num_tokens = None,
         use_pope = False,
+        routing_schedule: RoutingSchedule | None = None
     ):
         super().__init__()
 
@@ -348,7 +366,8 @@ class DepthlessTransformer(Module):
             ensemble_size = num_blocks,
             dim = dim,
             voting_attn_kwargs = dict(dim_head = dim_head, heads = heads),
-            num_message_exchanges = num_message_exchanges
+            num_message_exchanges = num_message_exchanges,
+            routing_schedule = routing_schedule
         )
 
         # the attention residual, or just putting together the information coming from various recurrent modules
