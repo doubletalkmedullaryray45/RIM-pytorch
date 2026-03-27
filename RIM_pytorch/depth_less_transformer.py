@@ -100,6 +100,8 @@ class Attention(Module):
         else:
             sim = einsum(q, k, 'b h i d, b h j d -> b h i j')
 
+            sim = sim * self.scale
+
             if self.causal:
                 i, j = sim.shape[-2:]
                 causal_mask = torch.ones((i, j), dtype = torch.bool, device = device).triu(j - i + 1)
@@ -138,7 +140,7 @@ class Feedforward(Module):
     ):
         queries = self.norm(tokens)
         sim, gates = self.keys(queries).chunk(2, dim = -1)
-        sim = sim * F.gelu(gates)
+        sim = sim * F.silu(gates)
         return self.values(sim)
 
 # ensemble
