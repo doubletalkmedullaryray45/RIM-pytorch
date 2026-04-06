@@ -190,3 +190,24 @@ def test_multi_message_module():
     assert messages[0].shape == (3, 2, 32, 256)
     assert messages[1].shape == (3, 2, 32, 256)
     assert messages[2].shape == (3, 2, 32, 256)
+
+def test_recurrent_message_passing():
+    model = DepthlessTransformer(
+        dim = 256,
+        num_blocks = 4,
+        num_message_exchanges = 3,
+        num_tokens = 256,
+        use_pope = False
+    )
+
+    tokens = torch.randint(0, 256, (2, 10))
+
+    # initial pass
+    logits, messages = model(tokens, return_messages=True)
+    assert logits.shape == (2, 10, 256)
+    assert len(messages) == 7 # init + 6 messages (3 rounds * 2 modules (attn, ff))
+
+    # second pass, passing messages back into the model
+    logits_recurrent, messages_recurrent = model(tokens, return_messages=True, messages=messages)
+    assert logits_recurrent.shape == (2, 10, 256)
+    assert len(messages_recurrent) == 14 # 7 from prev + init + 6 messages

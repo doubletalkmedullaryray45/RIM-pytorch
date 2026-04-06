@@ -2,7 +2,7 @@ from __future__ import annotations
 from functools import partial
 
 import torch
-from torch import nn
+from torch import nn, Tensor
 import torch.nn.functional as F
 from torch.nn import Module, Linear, Parameter, ParameterList
 from torch.func import vmap, functional_call
@@ -253,7 +253,8 @@ class EnsemblesWithMessagePassing(Module):
         repeat_input_for_ensemble: bool = False,
         return_all_messages: bool = False,
         num_message_exchanges: int | None = None,
-        routing_schedule: RoutingSchedule | None = None
+        routing_schedule: RoutingSchedule | None = None,
+        messages: list[Tensor] | None = None
     ): # (l b ...)
 
         routing_schedule = default(routing_schedule, self.routing_schedule)
@@ -275,7 +276,8 @@ class EnsemblesWithMessagePassing(Module):
                 default_name = next(iter(self.ensembles.keys()))
                 module_kwargs = {default_name: module_kwargs}
 
-        messages = [tokens]
+        messages = default(messages, [])
+        messages = [*messages, tokens]
         blocks = self.ensemble_size
 
         # reframed as recurrent processing of tokens with message passing (attention residual)
@@ -413,7 +415,8 @@ class DepthlessTransformer(Module):
         tokens,
         return_messages = False,
         num_message_exchanges: int | None = None,
-        routing_schedule: RoutingSchedule | None = None
+        routing_schedule: RoutingSchedule | None = None,
+        messages: list[Tensor] | None = None
     ):
         if exists(self.token_emb):
             tokens = self.token_emb(tokens)
@@ -435,7 +438,8 @@ class DepthlessTransformer(Module):
             repeat_input_for_ensemble = True,
             return_all_messages = True,
             num_message_exchanges = num_message_exchanges,
-            routing_schedule = routing_schedule
+            routing_schedule = routing_schedule,
+            messages = messages
         )
 
         # the readout itself is just another message producer
